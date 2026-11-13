@@ -5,6 +5,14 @@ services:
       - "8000:8000"
     environment:
       - DB_PATH=/data/app.db
+      # 写锁忙等待固定 5 秒，超时返回可重试的 503
+      - BUSY_TIMEOUT_MS=5000
+      # 上传处理的专用有界执行名额；排队不占用页面查询线程
+      - UPLOAD_WORKERS=2
+      # 受控演示台（/demo）；生产可设为 0 关闭
+      - DEMO_ENABLED=1
+      # 演示台读探针对本机的回环地址
+      - SELF_URL=http://127.0.0.1:8000
     volumes:
       - survey-data:/data
     restart: unless-stopped

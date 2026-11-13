@@ -9,14 +9,15 @@ FastAPI + SQLite 实现，三方向（基线 / 修订 / 当前）逐字段合并
 docker compose up --build
 ```
 
-浏览器打开 **http://localhost:8000** 即可操作。SQLite 数据持久化在名为 `survey-data` 的卷中；
-首次启动自动载入 `data/initial_records.csv` 的 12 条初始记录。
+浏览器打开 **http://localhost:8000** 即可：上传修订、查看合并预览、人工裁决冲突、导出记录。
+SQLite 数据持久化在名为 `survey-data` 的卷中；首次启动自动载入 `data/initial_records.csv` 的 12 条初始记录。
+容器自带健康检查，启动后可在 **http://localhost:8000/demo** 打开并发/取消演示台。
 
 本地开发（可选）：
 
 ```bash
 pip install -r requirements.txt
-uvicorn app.main:app --reload   # http://localhost:8000
+uvicorn app.main:app            # http://localhost:8000
 ```
 
 ## 数据格式
@@ -40,7 +41,7 @@ R001,Q1,羊草,12
    - 双方同字段改不同值、同 ID 新增内容不同、删除与修改相遇 → 展示三方值，逐项人工选择；
    - 全部裁决后一键**整批确认**，只应用离线改动。
 
-## 合并规则
+## 合并规则（三方比较 + 人工裁决，保持不变）
 
 | 情形 | 结果 |
 |---|---|
@@ -54,9 +55,81 @@ R001,Q1,羊草,12
 | 双方各自新增同 ID 同内容 | 只留一份 |
 | 双方各自新增同 ID 不同内容 | 冲突：二选一 |
 
+## 并发与写锁模型（本次修复重点）
+
+修复前所有写入共用一把进程级互斥锁，SQLite 写锁等待会拖住整个网页，超时还返回 500。
+修复后的保证：
+
+### 1. WAL + 5 秒忙等待，读路径不被写锁阻塞
+
+- 数据库启用 **WAL 日志模式**：一个连接持有写锁时，其它连接仍能读到已提交记录，
+  首页 `/` 与 CSV 导出 `/export.csv` 始终是短只读事务，40 份并发上传等锁期间读取仍 **< 1 秒**。
+- 每个连接设置 `busy_timeout=5000`：写操作以 `BEGIN IMMEDIATE` 在事务起点抢写锁，
+  在 SQLite 内部忙等最多 5 秒，不占用 Python 侧锁。
+- 忙等 5 秒仍未获得写锁 → 抛 `db.LockTimeout`，Web 层统一返回 **HTTP 503 + `Retry-After: 5`**，
+  事务整体回滚、**不留任何预览**；解锁后重新上传同一文件即可成功。普通输入错误仍是 303/400，不会变 500。
+
+### 2. 上传执行资源有界，排队不占页面查询线程
+
+- 上传的重活（解析、三方比较、写预览）提交到**专用有界线程池**
+  （`UPLOAD_WORKERS`，默认 2），与 FastAPI/anyio 服务页面查询的共享线程池物理隔离；
+  不通过扩大共享线程池解决问题。
+- 超出名额的上传在上传池自己的无界队列中等待，路由协程只 await 一个事件，
+  等待期间事件循环可继续服务页面请求。注册表本身有界（`MAX_TRACKED_JOBS`，默认 200）。
+
+### 3. 取消语义
+
+- 排队中的任务可经 `POST /api/jobs/{id}/cancel`（或客户端断连）取消：
+  立即转 `cancelled`，任务体**永不执行，因此不会迟到生成预览**。
+- 已开始运行的任务取消返回 `cancelled=false`：必须等它把数据库事务**提交或回滚、关闭连接**后
+  自然结束并归还执行名额，不能提前回收。
+- 重复取消是幂等 no-op，不会重复释放任何资源。
+- 任务状态可经 `GET /api/jobs` 查询（queued / running / done / error / cancelled）。
+
+### 4. 单事务的"核对 + 应用"
+
+预览确认把"快照过期核对 → 必要时按最新记录重算 → 裁决合成 → 整批应用"放进同一个
+`BEGIN IMMEDIATE` 事务，替代旧的进程级锁；任何失败整体回滚，当前数据不变。
+
+### 可调环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `BUSY_TIMEOUT_MS` | `5000` | SQLite 写锁忙等待上限（需求固定 5 秒） |
+| `UPLOAD_WORKERS` | `2` | 上传专用线程池执行名额（有界） |
+| `MAX_TRACKED_JOBS` | `200` | 内存中同时保留的任务句柄上限 |
+| `DEMO_ENABLED` | `1` | 是否挂载 `/demo` 演示台，生产可设 `0` 关闭 |
+| `SELF_URL` | `http://127.0.0.1:8000` | 演示台读探针对本机的回环地址 |
+
+## 受控演示（持锁 / 并发上传 / 取消）
+
+### 网页演示台：http://localhost:8000/demo
+
+- **① 写锁持有**：用独立连接 `BEGIN IMMEDIATE` 持有写锁指定秒数，可随时提前释放。
+- **② 演练 A（40 并发上传）**：一次提交 40 份修订，期间持续采样首页与 CSV 导出延迟，
+  报告逐条断言：全部上传落地、成功数与预览条数一致、所有读取 < 1 秒且返回 200。
+- **③ 演练 B（503 与重试）**：自动持锁后连续上传，断言每份忙等约 5 秒得到可重试 503、
+  无预览残留；解锁后重传同一份修订成功。
+- **④ 演练 C（取消语义）**：断言排队任务取消后不执行、不产生预览，运行中任务拒绝取消、
+  完成提交/回滚后才释放连接与名额，重复取消幂等，持锁下取消排队任务、解锁后队列恢复。
+
+### 命令行脚本（仅标准库）：`demos/demo_upload.py`
+
+```bash
+# 40 份并发上传 + 读延迟采样
+python3 demos/demo_upload.py burst  http://127.0.0.1:8000 1 --count 40
+# 终端 1：持有写锁；终端 2：上传 -> 503；释放后重传 -> 303 预览
+python3 demos/demo_upload.py hold    http://127.0.0.1:8000 --seconds 12
+python3 demos/demo_upload.py upload  http://127.0.0.1:8000 1      # HTTP 503, Retry-After=5
+python3 demos/demo_upload.py release http://127.0.0.1:8000
+python3 demos/demo_upload.py upload  http://127.0.0.1:8000 1      # HTTP 303 -> 预览
+# 持锁下批量提交并取消排队任务（含重复取消、运行中取消）
+python3 demos/demo_upload.py cancel  http://127.0.0.1:8000 1 --count 8
+```
+
 ## 过期保护与事务性
 
-- 预览生成时对**计划触及的记录**拍快照；确认时重新核对。
+- 预览生成时对**计划触及的记录**拍快照；确认时在同一事务内重新核对。
   拟改记录在预览后又被修改或删除 → **拒绝旧预览**，按最新当前记录自动重新比较；
   **无关记录的变化不影响确认**。
 - 整批应用在单个事务中执行，任何失败整体回滚，**当前数据不变**。
@@ -82,12 +155,15 @@ R001,Q1,羊草,12
 
 ```text
 app/
-  main.py        FastAPI 路由：记录维护、基线、上传、预览、确认
+  main.py        FastAPI 路由：记录维护、基线、异步上传、预览、确认、演示挂载
+  jobs.py        上传专用有界线程池 + 任务注册表 + 排队/运行取消语义
+  db.py          SQLite 访问层：WAL、busy_timeout、BEGIN IMMEDIATE、单事务核对与应用
+  demo.py        /demo 受控演示：持锁、40 并发读探针、503 重试、取消语义
   merge.py       三方向逐字段合并与冲突裁决合成
   csvio.py       修订 CSV 解析（校验非负整数株数等）与导出
-  db.py          SQLite 访问层；确认动作单事务应用
-  templates/     页面模板
+  templates/     页面模板（含 demo.html / demo_report.html）
 data/initial_records.csv   初始数据（首次启动自动载入）
 samples/                   两队交叉修订样例
+demos/demo_upload.py       标准库实现的命令行演练脚本
 Dockerfile / docker-compose.yml
 ```

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}并发与取消受控演示 · 植被调查合并平台{% endblock %}
+{% block content %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+
+<section>
+  <h2>演示环境</h2>
+  <p class="muted">
+    上传执行名额（专用有界线程池）：<b>{{ workers }}</b>；SQLite 写锁忙等待：<b>{{ busy_timeout }} ms</b>；
+    页面查询走独立的共享线程池，上传排队不占用页面线程。
+  </p>
+  <p class="muted">
+    持锁状态：
+    {% if holder.holding %}<span class="tag conf">持有中，剩余约 {{ holder.remaining_seconds }} 秒</span>
+    {% else %}<span class="tag add">未持锁</span>{% endif %}
+  </p>
+</section>
+
+<section>
+  <h2>① 写锁持有（模拟长事务）</h2>
+  <p class="muted">用独立 SQLite 连接执行 BEGIN IMMEDIATE 并持有写锁；持锁期间上传会忙等 5 秒后得到可重试的 503，且不留预览。</p>
+  <form method="post" action="/demo/lock/hold" style="display:inline">
+    <input type="number" name="seconds" value="8" min="1" max="60" step="1" style="width:90px"> 秒
+    <button type="submit">持有写锁</button>
+  </form>
+  <form method="post" action="/demo/lock/release" style="display:inline">
+    <button type="submit" class="danger">立即释放写锁</button>
+  </form>
+</section>
+
+<section>
+  <h2>② 演练 A：40 份并发上传（读路径不被阻塞）</h2>
+  <p class="muted">
+    一次性提交 40 份修订到有界上传池，期间持续采样首页与 CSV 导出的读取延迟，
+    校验每次读取都在 1 秒内返回、成功上传与预览条数一一对应。
+  </p>
+  <form method="post" action="/demo/burst">
+    <input type="number" name="n" value="40" min="1" max="80" step="1" style="width:90px"> 份
+    <button type="submit">开始并发演练</button>
+  </form>
+</section>
+
+<section>
+  <h2>③ 演练 B：持锁上传 → 503 → 解锁重传</h2>
+  <p class="muted">自动持锁后连续上传：每份都应忙等约 5 秒得到锁超时（503 语义、无预览残留）；解锁后重新上传同一份修订成功。</p>
+  <form method="post" action="/demo/timeout">
+    <input type="number" name="n" value="6" min="1" max="10" step="1" style="width:90px"> 份
+    <button type="submit">开始锁超时演练</button>
+  </form>
+</section>
+
+<section>
+  <h2>④ 演练 C：取消语义</h2>
+  <p class="muted">
+    校验：排队任务取消后永不执行、不产生预览；运行中任务拒绝取消、须完成提交/回滚并释放连接与名额；
+    重复取消幂等；持锁期间取消排队任务、解锁后其余任务恢复处理。
+  </p>
+  <form method="post" action="/demo/cancel">
+    <button type="submit">开始取消演练</button>
+  </form>
+</section>
+
+<section>
+  <h2>最近任务（自动刷新）</h2>
+  <table>
+    <tr><th>任务</th><th>状态</th><th>类型</th><th>排队 ms</th><th>执行 ms</th></tr>
+    {% for j in jobs %}
+    <tr>
+      <td>{{ j.id }} <span class="muted">{{ j.label }}</span></td>
+      <td>{{ j.state }}</td><td>{{ j.error_type or "-" }}</td>
+      <td>{{ j.queued_ms }}</td><td>{{ j.elapsed_ms }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="muted"><a href="/api/jobs">查看任务 JSON（/api/jobs）</a>　<a class="btn plain" href="/demo">刷新</a></p>
+  <script>setTimeout(() => location.reload(), 3000);</script>
+</section>
+
+<p><a class="btn plain" href="/">返回首页</a></p>
+{% endblock %}

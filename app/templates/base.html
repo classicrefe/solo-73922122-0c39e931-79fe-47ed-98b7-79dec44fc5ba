@@ -36,6 +36,7 @@
 <header>
   <h1>🌿 植被调查离线修订合并</h1>
   <a href="/">当前记录 / 合并入口</a>
+  {% if DEMO_ENABLED %}<a href="/demo">并发 / 取消演示台</a>{% endif %}
 </header>
 <main>
 {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
