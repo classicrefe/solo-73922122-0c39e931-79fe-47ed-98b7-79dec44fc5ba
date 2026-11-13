@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block content %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+{% if pv.message %}<div class="msg">⚠️ {{ pv.message }}</div>{% endif %}
+
+<section>
+  <h2>合并预览 {{ pv.token }}（基线 #{{ pv.baseline_id }} {{ baseline.name }}）</h2>
+  <p class="muted">状态：
+    {% if pv.status == 'pending' %}<span class="tag conf">待确认</span>
+    {% elif pv.status == 'applied' %}<span class="tag add">已应用</span>
+    {% else %}<span class="tag">已放弃</span>{% endif %}
+    　生成时间：{{ pv.created_at }}</p>
+  <p class="muted">确认时将重新核对本计划触及的 {{ plan.involved|length }} 条记录；若它们在预览后被改动或删除，本次确认会被拒绝并按最新当前记录重新比较；无关记录的变化不影响确认。</p>
+</section>
+
+<form method="post" action="/previews/{{ pv.token }}/confirm">
+<section>
+  <h2>自动合并（{{ plan.auto|length }} 项，无需处理）</h2>
+  {% if plan.auto %}
+  <table>
+    <tr><th>ID</th><th>动作</th><th>明细</th></tr>
+    {% for a in plan.auto %}
+    <tr>
+      <td>{{ a.id }}</td>
+      <td>
+        {% if a.action == 'insert' %}<span class="tag add">新增</span>
+        {% elif a.action == 'delete' %}<span class="tag del">删除</span>
+        {% else %}<span class="tag upd">更新</span>{% endif %}
+      </td>
+      <td>
+        {% if a.action == 'insert' %}
+          样方={{ a.record.quadrat }}，物种={{ a.record.species }}，株数={{ a.record.count }}
+        {% elif a.action == 'delete' %}
+          删除：样方={{ a.record.quadrat }}，物种={{ a.record.species }}，株数={{ a.record.count }}
+        {% else %}
+          {% for f, t in a.taken.items() %}
+            {% if t.src == 'rev' %}{{ FIELD_LABELS[f] }}：{{ t.base }} → <b>{{ t.value }}</b>（采用修订）{% else %}{{ FIELD_LABELS[f] }}：保留当前值 {{ t.value }}{% endif %}{{ "<br>" if not loop.last }}
+          {% endfor %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">无自动合并项。</p>{% endif %}
+</section>
+
+<section>
+  <h2>冲突（{{ plan.conflicts|length }} 项，需逐一人工选择）</h2>
+  {% if not plan.conflicts %}<p class="muted">无冲突。</p>{% endif %}
+
+  {% for c in plan.conflicts %}
+  <div class="conflict">
+    {% if c.ctype == 'fields' %}
+      <h3>⚠️ {{ c.id }}：双方改了同一字段的不同值</h3>
+      <p class="muted">已自动合并的字段：
+        {% for f, v in c.merged.items() %}{{ FIELD_LABELS[f] }}={{ v }}{% if not loop.last %}，{% endif %}{% endfor %}</p>
+      <table>
+        <tr><th>字段</th><th>基线值</th><th>修订值</th><th>当前值</th><th>选择</th></tr>
+        {% for fc in c.fields %}
+        <tr>
+          <td>{{ FIELD_LABELS[fc.field] }}</td>
+          <td class="basev">{{ fc.base }}</td><td>{{ fc.rev }}</td><td>{{ fc.cur }}</td>
+          <td class="radio-line">
+            <label><input type="radio" name="c_{{ c.id }}_{{ fc.field }}" value="rev" required> 采用修订值 {{ fc.rev }}</label>
+            <label><input type="radio" name="c_{{ c.id }}_{{ fc.field }}" value="cur"> 保留当前值 {{ fc.cur }}</label>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+
+    {% elif c.ctype == 'delete_vs_modify' %}
+      <h3>⚠️ {{ c.id }}：离线删除 vs 当前已修改</h3>
+      <table>
+        <tr><th></th><th>样方</th><th>物种</th><th>株数</th></tr>
+        <tr><td class="basev">基线</td><td class="basev">{{ c.base.quadrat }}</td><td class="basev">{{ c.base.species }}</td><td class="basev">{{ c.base.count }}</td></tr>
+        <tr><td>修订</td><td colspan="3"><span class="tag del">整行删除</span></td></tr>
+        <tr><td>当前</td><td>{{ c.cur.quadrat }}</td><td>{{ c.cur.species }}</td><td>{{ c.cur.count }}</td></tr>
+      </table>
+      <p class="radio-line">
+        <label><input type="radio" name="c_{{ c.id }}__" value="rev" required> 采用修订：删除该记录</label>
+        <label><input type="radio" name="c_{{ c.id }}__" value="cur"> 保留当前修改后的记录</label>
+      </p>
+
+    {% elif c.ctype == 'modify_vs_delete' %}
+      <h3>⚠️ {{ c.id }}：离线修改 vs 当前已删除</h3>
+      <table>
+        <tr><th></th><th>样方</th><th>物种</th><th>株数</th></tr>
+        <tr><td class="basev">基线</td><td class="basev">{{ c.base.quadrat }}</td><td class="basev">{{ c.base.species }}</td><td class="basev">{{ c.base.count }}</td></tr>
+        <tr><td>修订</td><td>{{ c.rev.quadrat }}</td><td>{{ c.rev.species }}</td><td>{{ c.rev.count }}</td></tr>
+        <tr><td>当前</td><td colspan="3"><span class="tag del">已删除</span></td></tr>
+      </table>
+      <p class="radio-line">
+        <label><input type="radio" name="c_{{ c.id }}__" value="rev" required> 采用修订：按修订值恢复该记录</label>
+        <label><input type="radio" name="c_{{ c.id }}__" value="cur"> 保持删除</label>
+      </p>
+
+    {% elif c.ctype == 'add_add' %}
+      <h3>⚠️ {{ c.id }}：双方各自新增同一 ID，内容不同</h3>
+      <table>
+        <tr><th></th><th>样方</th><th>物种</th><th>株数</th></tr>
+        <tr><td>修订新增</td><td>{{ c.rev.quadrat }}</td><td>{{ c.rev.species }}</td><td>{{ c.rev.count }}</td></tr>
+        <tr><td>当前新增</td><td>{{ c.cur.quadrat }}</td><td>{{ c.cur.species }}</td><td>{{ c.cur.count }}</td></tr>
+      </table>
+      <p class="radio-line">
+        <label><input type="radio" name="c_{{ c.id }}__" value="rev" required> 采用修订版本</label>
+        <label><input type="radio" name="c_{{ c.id }}__" value="cur"> 保留当前版本</label>
+      </p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+
+{% if pv.status == 'pending' %}
+<section>
+  <button type="submit">全部冲突已裁决，确认并整批应用离线改动</button>
+  <button type="submit" class="danger" form="discard-{{ pv.token }}" onclick="return confirm('确定放弃本次合并？')">放弃本次合并</button>
+</section>
+{% endif %}
+</form>
+<form id="discard-{{ pv.token }}" method="post" action="/previews/{{ pv.token }}/discard"></form>
+
+<p><a class="btn plain" href="/">返回首页</a></p>
+{% endblock %}

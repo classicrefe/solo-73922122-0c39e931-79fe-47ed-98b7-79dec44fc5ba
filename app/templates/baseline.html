@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+<section>
+  <h2>基线 #{{ baseline.id }}：{{ baseline.name }}</h2>
+  <p>保存时间：{{ baseline.created_at }}　记录数：{{ baseline.data|length }}</p>
+  <p><a class="btn" href="/baselines/{{ baseline.id }}/csv">下载该基线 CSV（交外业队离线修订）</a>
+     <a class="btn plain" href="/">返回首页</a></p>
+  <table>
+    <tr><th>ID</th><th>样方</th><th>物种</th><th>株数</th></tr>
+    {% for rid, r in baseline.data.items() %}
+    <tr><td>{{ rid }}</td><td>{{ r.quadrat }}</td><td>{{ r.species }}</td><td>{{ r.count }}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

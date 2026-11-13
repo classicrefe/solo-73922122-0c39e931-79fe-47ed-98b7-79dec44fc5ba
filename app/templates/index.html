@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+
+<section>
+  <h2>① 当前记录（共 {{ records|length }} 条）<a class="btn plain" style="float:right" href="/export.csv">导出当前 CSV</a></h2>
+  <table>
+    <tr><th>ID</th><th>样方</th><th>物种</th><th>株数</th><th>操作</th></tr>
+    {% for rid, r in records.items() %}
+    <tr>
+      <form method="post" action="/records/{{ rid }}/update">
+        <td>{{ rid }}</td>
+        <td><input type="text" name="quadrat" value="{{ r.quadrat }}" required></td>
+        <td><input type="text" name="species" value="{{ r.species }}" required></td>
+        <td><input type="number" name="count" value="{{ r.count }}" min="0" step="1" required></td>
+        <td>
+          <button type="submit">保存</button>
+          <button class="danger" type="submit" form="del-{{ rid }}" onclick="return confirm('确认删除 {{ rid }}？')">删除</button>
+        </td>
+      </form>
+    </tr>
+    <form id="del-{{ rid }}" method="post" action="/records/{{ rid }}/delete"></form>
+    {% endfor %}
+    <tr>
+      <form method="post" action="/records/add">
+        <td><input class="id" type="text" name="rid" placeholder="新ID" required></td>
+        <td><input type="text" name="quadrat" placeholder="样方" required></td>
+        <td><input type="text" name="species" placeholder="物种" required></td>
+        <td><input type="number" name="count" min="0" step="1" value="1" required></td>
+        <td><button type="submit">新增</button></td>
+      </form>
+    </tr>
+  </table>
+</section>
+
+<section>
+  <h2>② 导出并保存基线（交给外业队离线修订）</h2>
+  <form method="post" action="/baselines">
+    <input type="text" name="name" placeholder="基线名称（可选）" style="width:240px">
+    <button type="submit">保存当前记录为基线并导出 CSV</button>
+  </form>
+  {% if baselines %}
+  <table style="margin-top:12px">
+    <tr><th>基线</th><th>名称</th><th>保存时间</th><th>记录数</th><th>操作</th></tr>
+    {% for b in baselines %}
+    <tr>
+      <td>#{{ b.id }}</td><td>{{ b.name }}</td><td>{{ b.created_at }}</td><td>{{ b.size }}</td>
+      <td><a class="btn plain" href="/baselines/{{ b.id }}">查看 / 下载 CSV</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>
+
+<section>
+  <h2>③ 上传离线修订（缺行=删除，新ID=新增）</h2>
+  <form method="post" action="/merge/upload" enctype="multipart/form-data">
+    <label>对应基线：
+      <select name="baseline_id">
+        {% for b in baselines %}<option value="{{ b.id }}">#{{ b.id }} {{ b.name }}（{{ b.created_at }}）</option>{% endfor %}
+      </select>
+    </label>
+    <input type="file" name="file" accept=".csv" required>
+    <button type="submit">上传并生成合并预览</button>
+  </form>
+  {% if not baselines %}<p class="muted">请先在 ② 保存基线。</p>{% endif %}
+</section>
+
+{% if previews %}
+<section>
+  <h2>④ 合并预览记录</h2>
+  <table>
+    <tr><th>预览号</th><th>基线</th><th>时间</th><th>状态</th><th>说明</th><th>操作</th></tr>
+    {% for p in previews %}
+    <tr>
+      <td>{{ p.token }}</td><td>#{{ p.baseline_id }}</td><td>{{ p.created_at }}</td>
+      <td>
+        {% if p.status == 'pending' %}<span class="tag conf">待确认</span>
+        {% elif p.status == 'applied' %}<span class="tag add">已应用</span>
+        {% else %}<span class="tag">已放弃</span>{% endif %}
+      </td>
+      <td>{{ p.message }}</td>
+      <td><a class="btn plain" href="/previews/{{ p.token }}">打开</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+{% endblock %}

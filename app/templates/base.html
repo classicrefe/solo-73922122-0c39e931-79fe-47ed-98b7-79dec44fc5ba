@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}植被调查离线修订合并{% endblock %}</title>
+<style>
+  body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f4f6f4; color: #243024; }
+  header { background: #2e6b34; color: #fff; padding: 12px 24px; }
+  header a { color: #d9ecd9; text-decoration: none; margin-right: 16px; }
+  header h1 { display: inline; font-size: 18px; margin-right: 24px; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+  section { background: #fff; border: 1px solid #dde5dd; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; }
+  h2 { font-size: 16px; margin-top: 0; border-left: 4px solid #2e6b34; padding-left: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #dde5dd; padding: 6px 8px; font-size: 14px; text-align: left; }
+  th { background: #eef4ee; }
+  input[type=text], input[type=number] { width: 110px; padding: 4px 6px; border: 1px solid #c4d2c4; border-radius: 4px; }
+  input.id { width: 80px; }
+  button, .btn { background: #2e6b34; color: #fff; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-block; }
+  button.danger { background: #a03a3a; }
+  button.plain, .btn.plain { background: #5c6b5c; }
+  .msg { background: #fff8e1; border: 1px solid #e8d98a; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+  .tag.add { background: #e1f3e1; color: #226622; }
+  .tag.del { background: #fbe2e2; color: #8c2b2b; }
+  .tag.upd { background: #e2ecfb; color: #2b4d8c; }
+  .tag.conf { background: #fdeccb; color: #8a5a00; }
+  .conflict { border: 1px solid #e8c96a; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px; background: #fffdf5; }
+  .conflict h3 { margin: 0 0 8px; font-size: 15px; }
+  .basev { color: #888; }
+  .muted { color: #777; font-size: 13px; }
+  .radio-line label { margin-right: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌿 植被调查离线修订合并</h1>
+  <a href="/">当前记录 / 合并入口</a>
+</header>
+<main>
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
